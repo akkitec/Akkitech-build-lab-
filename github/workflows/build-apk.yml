@@ -1,0 +1,90 @@
+
+name: AKKITECH ZIP to APK AAB Builder
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Build Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip zip
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Extract and Detect ZIP
+        shell: bash
+        run: |
+          mkdir -p source
+          ZIP=$(find . -maxdepth 1 -name "*.zip" | head -n 1)
+          if [ -z "$ZIP" ]; then
+            echo "No source ZIP found in repository root"
+            exit 1
+          fi
+          unzip -q "$ZIP" -d source
+
+          GRADLE=$(find source -type f \( -name settings.gradle -o -name settings.gradle.kts \) | head -n 1)
+          if [ -n "$GRADLE" ]; then
+            echo "TYPE=android" >> $GITHUB_ENV
+            echo "PROJECT_DIR=$(dirname "$GRADLE")" >> $GITHUB_ENV
+          else
+            INDEX=$(find source -type f -name index.html | head -n 1)
+            if [ -z "$INDEX" ]; then
+              echo "No Android Gradle project or index.html found"
+              exit 1
+            fi
+            mkdir -p webapp
+            cp -a "$(dirname "$INDEX")/." webapp/
+            echo "TYPE=web" >> $GITHUB_ENV
+          fi
+
+      - name: Create Android WebView App
+        if: env.TYPE == 'web'
+        run: |
+          mkdir builder
+          cd builder
+          npm init -y
+          npm install @capacitor/core @capacitor/android
+          npm install -D @capacitor/cli
+          cp -r ../webapp www
+          node -e "require('fs').writeFileSync('capacitor.config.json', JSON.stringify({appId:'com.akkitech.buildapp',appName:'AKKITECH App',webDir:'www'}))"
+          npx cap add android
+          npx cap sync android
+
+      - name: Build APK and AAB
+        shell: bash
+        run: |
+          if [ "$TYPE" = "android" ]; then
+            cd "$PROJECT_DIR"
+          else
+            cd builder/android
+          fi
+          chmod +x gradlew
+          ./gradlew assembleDebug bundleDebug --stacktrace
+
+      - name: Upload APK and AAB
+        uses: actions/upload-artifact@v4
+        with:
+          name: AKKITECH-APK-AAB
+          path: |
+            **/build/outputs/apk/**/*.apk
+            **/build/outputs/bundle/**/*.aab
+          if-no-files-found: error
