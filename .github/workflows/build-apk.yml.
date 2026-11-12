@@ -1,0 +1,68 @@
+
+name: AKKITECH Build APK
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Extract Source ZIP
+        run: |
+          ZIP=$(find . -maxdepth 1 -name "*.zip" | head -n 1)
+          if [ -z "$ZIP" ]; then
+            echo "Source ZIP not found"
+            exit 1
+          fi
+          mkdir source
+          unzip -q "$ZIP" -d source
+          test -f source/package.json || exit 1
+
+      - name: Build Web App
+        run: |
+          cd source
+          npm install
+          npm run build
+
+      - name: Create Android App
+        run: |
+          mkdir android-wrapper
+          cd android-wrapper
+          npm init -y
+          npm install @capacitor/core @capacitor/android
+          npm install -D @capacitor/cli
+          cp -r ../source/dist ./www
+          echo '{"appId":"com.akkitech.buildlab","appName":"AKKITECH BUILD LAB","webDir":"www"}' > capacitor.config.json
+          npx cap add android
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: AKKITECH-BUILD-LAB-APK
+          path: android-wrapper/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
