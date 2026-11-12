@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Setup Node.js
@@ -29,38 +29,46 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Install Android SDK Components
+        run: |
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
       - name: Extract Source ZIP
         run: |
           ZIP=$(find . -maxdepth 1 -name "*.zip" | head -n 1)
-          if [ -z "$ZIP" ]; then
-            echo "Source ZIP not found"
-            exit 1
-          fi
+          test -n "$ZIP" || { echo "Source ZIP missing"; exit 1; }
           mkdir source
           unzip -q "$ZIP" -d source
-          test -f source/package.json || exit 1
+          PROJECT=$(find source -name package.json -not -path '*/node_modules/*' | head -n 1)
+          test -n "$PROJECT" || { echo "package.json missing"; exit 1; }
+          echo "PROJECT_DIR=$(dirname "$PROJECT")" >> "$GITHUB_ENV"
 
-      - name: Build Web App
+      - name: Build React Web App
         run: |
-          cd source
+          cd "$PROJECT_DIR"
           npm install
           npm run build
+          test -d dist || { echo "Vite dist folder missing"; exit 1; }
 
-      - name: Create Android App
+      - name: Create Capacitor Android Project
         run: |
           mkdir android-wrapper
           cd android-wrapper
           npm init -y
-          npm install @capacitor/core @capacitor/android
-          npm install -D @capacitor/cli
-          cp -r ../source/dist ./www
+          npm install @capacitor/core@6 @capacitor/android@6
+          npm install -D @capacitor/cli@6
+          mkdir www
+          cp -a "$GITHUB_WORKSPACE/$PROJECT_DIR/dist/." www/
           echo '{"appId":"com.akkitech.buildlab","appName":"AKKITECH BUILD LAB","webDir":"www"}' > capacitor.config.json
           npx cap add android
-          cd android
+
+      - name: Compile APK
+        run: |
+          cd android-wrapper/android
           chmod +x gradlew
           ./gradlew assembleDebug
 
-      - name: Upload APK
+      - name: Upload Real APK
         uses: actions/upload-artifact@v4
         with:
           name: AKKITECH-BUILD-LAB-APK
